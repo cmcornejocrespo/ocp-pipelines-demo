@@ -11,7 +11,7 @@ spec:
   params:
     - name: GIT_URL
       type: string
-      default: "https://github.com/rmarting/kafka-clients-quarkus-sample.git"
+      default: "https://github.com/spring-projects/spring-petclinic.git"
     - name: GIT_REVISION
       type: string
       default: "main"      

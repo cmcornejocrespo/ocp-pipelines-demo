@@ -118,12 +118,12 @@ of the parameters. The argument `--param` or `-p` sets up a different value for
 the parameter:
 
 ```shell
-❯ tkn task start hello-params-task hello-params \
-  -p person=Roman \
+❯ tkn task start hello-params-task \
+  -p person="My name" \
   --showlog
 TaskRun started: hello-params-task-run-jqfbs
 Waiting for logs to be available...
-[say-hello] Hello Roman
+[say-hello] My name
 ```
 
 ### Multiple Stepped Task
@@ -135,6 +135,41 @@ steps array.
 The [03-hello-multisteps-task.yaml](./03-hello-multisteps-task.yaml) includes a
 task with two steps to combine the execution of the task.
 
+```yaml
+---
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: hello-multisteps-task
+  annotations:
+    description: |
+      A simple task with some steps that prints the a
+      variable greeting message
+spec:
+  params:
+    - name: person
+      description: Name of person to greet
+      default: World
+      type: string
+  steps:
+    - name: write-hello
+      image: registry.redhat.io/ubi8/ubi-minimal
+      script: |
+        #!/usr/bin/env bash
+        echo Preparing greeting
+        echo -n Hello $(params.person) > /tekton/home/hello.txt
+        sleep 2
+        echo Done!
+    - name: say-hello
+      image: node:14
+      script: |
+        #!/usr/bin/env node
+        let fs = require("fs");
+        let file = "/tekton/home/hello.txt";
+        let fileContent = fs.readFileSync(file).toString();
+        console.log(fileContent);
+```
+
 Create the task:
 
 ```shell
@@ -145,14 +180,14 @@ Start the task.
 
 ```shell
 ❯ tkn task start hello-multisteps-task \
-  -p person=Roman \
+  -p person="My name" \
   --showlog
 TaskRun started: hello-multisteps-task-run-xq79n
 Waiting for logs to be available...
 [write-hello] Preparing greeting
 [write-hello] Done!
 
-[say-hello] Hello Roman
+[say-hello] Hello My name
 [say-hello] 
 ```
 
@@ -248,6 +283,56 @@ sequence using `runAfter` definition.
 [05-say-things-in-order-pipeline.yaml](./05-say-things-in-order-pipeline.yaml) file
 has a sample of order and parallel tasks in a pipeline.
 
+```yaml
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: say-things-in-order-pipeline
+  annotations:
+    description: |
+      Sample pipeline saying things in different moments.
+spec:
+  tasks:
+    - name: first-task
+      params:
+        - name: pause-duration
+          value: "2"
+        - name: say-what
+          value: "Hello, this is the first task"
+      taskRef:
+        name: say-something-task
+    - name: second-parallel-task
+      params:
+        - name: say-what
+          value: "Happening after task 1, in parallel with task 3"
+        - name: pause-duration
+          value: "2"
+      taskRef:
+        name: say-something-task
+      runAfter:
+        - first-task
+    - name: third-parallel-task
+      params:
+        - name: say-what
+          value: "Happening after task 1, in parallel with task 2"
+        - name: pause-duration
+          value: "1"
+      taskRef:
+        name: say-something-task
+      runAfter:
+        - first-task
+    - name: fourth-task
+      params:
+        - name: say-what
+          value: "Happening after task 2 and 3"
+      taskRef:
+        name: say-something-task
+      runAfter:
+        - second-parallel-task
+        - third-parallel-task
+```
+
 ```shell
 oc apply -f 05-say-things-in-order-pipeline.yaml
 ```
@@ -309,7 +394,7 @@ spec:
       description: The workspace consisting of repository.
   steps:
     - name: count
-      image: registry.redhat.io/ubi7/ubi-minimal
+      image: registry.redhat.io/ubi8/ubi-minimal
       command:
         - /bin/bash
       args: ['-c', 'echo $(find /workspace/source -type f | wc -l) files in repo']
@@ -318,6 +403,50 @@ spec:
 [07-count-workspace-pipeline.yaml](./07-count-workspace-pipeline.yaml) file describes
 a sample pipeline using a workspace across different tasks. This example uses a
 `ClusterTask` to demonstrate how to reuse these objects in a pipeline.
+
+```yaml
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: count-workspace-pipeline
+  annotations:
+    description: |
+      Sample pipeline using a workspace to share data between
+      different tasks.
+spec:
+  params:
+    - name: GIT_URL
+      type: string
+      default: "https://github.com/spring-projects/spring-petclinic.git"
+    - name: GIT_REVISION
+      type: string
+      default: "main"      
+  workspaces:
+    - name: workspace
+  tasks:
+    - name: fetch-repository
+      params:
+        - name: url
+          value: $(params.GIT_URL)
+        - name: revision
+          value: $(params.GIT_REVISION)
+      taskRef:
+        kind: ClusterTask
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: workspace
+    - name: count-repo
+      taskRef:
+        name: count-files-workspace-task
+      runAfter:
+        - fetch-repository
+      workspaces:
+        - name: source
+          workspace: workspace
+```
+
 
 Create the task and the pipeline:
 
@@ -328,6 +457,21 @@ oc apply -f 07-count-workspace-pipeline.yaml
 
 As this workspace requires a storage, we need to create the `PersistentVolumeClaim`.
 The [07-workspace-pvc.yaml](./07-workspace-pvc.yaml) defines it.
+
+```yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+```
 
 Create PVC to store the data:
 
@@ -340,7 +484,7 @@ parameters declared in the pipeline:
 
 ```shell
 tkn pipeline start count-workspace-pipeline \
-    --param GIT_URL=https://github.com/rmarting/kafka-clients-quarkus-sample.git \
+    --param GIT_URL=https://github.com/spring-projects/spring-petclinic.git \
     --param GIT_REVISION=master \
     --workspace name=workspace,claimName=workspace-pvc \
     --showlog
@@ -350,7 +494,7 @@ Start again the pipeline with other parameters:
 
 ```shell
 tkn pipeline start count-workspace-pipeline \
-    --param GIT_URL=https://github.com/rmarting/strimzi-migration-demo.git \
+    --param GIT_URL=https://github.com/spring-projects/spring-boot.git \
     --use-param-defaults \
     --workspace name=workspace,claimName=workspace-pvc \
     --showlog

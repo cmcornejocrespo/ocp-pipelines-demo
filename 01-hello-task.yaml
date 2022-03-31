@@ -9,7 +9,7 @@ metadata:
 spec:
   steps:
     - name: say-hello
-      image: registry.redhat.io/ubi7/ubi-minimal
+      image: registry.redhat.io/ubi8/ubi-minimal
       command:
         - /bin/bash
       args: ['-c', 'echo Hello World']

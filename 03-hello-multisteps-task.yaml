@@ -15,7 +15,7 @@ spec:
       type: string
   steps:
     - name: write-hello
-      image: registry.redhat.io/ubi7/ubi-minimal
+      image: registry.redhat.io/ubi8/ubi-minimal
       script: |
         #!/usr/bin/env bash
         echo Preparing greeting
