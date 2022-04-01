@@ -520,7 +520,21 @@ The main objects related with triggers are:
 * `EventListener`: listens for events at a specified port on your OpenShift
 cluster. Specifies one or more `Triggers` or `TriggerTemplates`.
 
-Create our `EventListener` that uses a `TriggerTemplate`:
+For our use case we need to create an `EventListener` that will use a `TriggerTemplate`.
+The [08-count-workspace-pipeline-eventlistener.yaml](./08-count-workspace-pipeline-eventlistener.yaml) defines it.
+
+```yaml
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: count-workspace-pipeline-eventlistener
+spec:
+  serviceAccountName: pipeline
+  triggers:
+    - triggerRef: github-listener-trigger
+```
+
+Create a `EventListener` that uses a `Trigger`:
 
 ```shell
 oc apply -f 08-count-workspace-pipeline-eventlistener.yaml
@@ -556,6 +570,40 @@ We will use this route later to integrate in our GitHub repository as a WebHook.
 A `Trigger` specifies a `TriggerTemplate`, a `TriggerBinding`, and
 optionally, an Interceptor.
 
+Let's create a `Trigger` that will intercept an event (Github webook) and will execute a `TriggerTemplate`. Ir order to parse the payload and share that information to the `TriggerTemplate` a `TriggerBinding` is required.
+
+The [08-count-workspace-pipeline-trigger.yaml](./08-count-workspace-pipeline-trigger.yaml) defines it.
+
+```yaml
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: Trigger
+metadata:
+  name: github-listener-trigger
+spec:
+  interceptors:
+    - ref:
+        name: github
+      params:
+        - name: secretRef
+          value:
+            secretName: github-interceptor-webhook
+            secretKey: secret
+        - name: eventTypes
+          value: ["push"]
+    - ref:
+        name: cel
+      params:
+        - name: "filter"
+          value: body.ref == 'refs/heads/main'
+  bindings:
+    - ref: count-workspace-pipeline-triggerbinding
+  template:
+    ref: count-workspace-pipeline-triggertemplate
+```
+
+Create a `Trigger` that uses a `TriggerTemplate`:
+
 ```shell
 oc apply -f 08-count-workspace-pipeline-trigger.yaml
 ```
@@ -590,6 +638,43 @@ or `PipelineRun`, that you want to instantiate and/or execute when your
 `EventListener` detects an event. It exposes parameters that you can use
 anywhere within your resource’s template.
 
+The [08-count-workspace-pipeline-triggertemplate.yaml](./08-count-workspace-pipeline-triggertemplate.yaml) defines it.
+
+```yaml
+---
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: count-workspace-pipeline-triggertemplate
+spec:
+  params:
+    - name: git_url
+      description: The git repository that hosts context  
+    - name: git_revision
+      description: The revision of the repository  
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: count-workspace-pipeline-run-
+        annotations:
+          tekton.dev/gitURL: "$(tt.params.git_url)"      
+      spec:
+        pipelineRef:
+          name: count-workspace-pipeline
+        params:
+          - name: GIT_URL
+            value: $(tt.params.git_url)
+          - name: GIT_REVISION
+            value: $(tt.params.git_revision)
+        workspaces:
+          - name: workspace
+            persistentVolumeClaim:
+              claimName: workspace-pvc
+```
+
+Create the `TriggerTemplate`:
+
 ```shell
 oc apply -f 08-count-workspace-pipeline-triggertemplate.yaml
 ```
@@ -598,6 +683,24 @@ oc apply -f 08-count-workspace-pipeline-triggertemplate.yaml
 want to extract data and the fields in your corresponding `TriggerTemplate`
 to populate with the extracted values. You can then use the populated fields
 in the `TriggerTemplate` to populate fields in the associated `TaskRun` or `PipelineRun`.
+
+The [08-count-workspace-pipeline-triggerbinding.yaml](./08-count-workspace-pipeline-triggerbinding.yaml) defines it.
+
+```yaml
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: count-workspace-pipeline-triggerbinding
+spec:
+  params:
+  - name: git_url
+    value: $(body.repository.url)
+  - name: git_revision
+    value: $(body.repository.default_branch)
+
+```
+
+Create the `TriggerBinding`:
 
 ```shell
 oc apply -f 08-count-workspace-pipeline-triggerbinding.yaml
@@ -609,7 +712,7 @@ route exposed above and adding the `/hooks` path.
 In your GitHub repo go to `Settings -> Webhooks` and click `Add Webhook`. The
 fields we need to set are:
 
-* **Payload URL**: Your external IP Address from the route with `/hooks` path
+* **Payload URL**: Your external FQDN address from the route with `/hooks` path
 * **Content type**: `application/json`
 * **Secret**: Value defined in `github-interceptor-webhook` secret.
 
